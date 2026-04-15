@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Kobo Database Migration Assistant: Copy ___DeviceID from New E-Reader into Old E-Reader SQLite Database (client‑side)</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f9f9f9;
+      color: #333;
+      padding: 2rem;
+    }
+
+    h1 {
+      color: maroon;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: auto;
+      background: #fff;
+      padding: 1.5rem;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .1);
+      border-radius: 8px;
+    }
+    
+    footer {
+    width: 100%;
+    text-align: center;
+    }
+
+    label {
+      display: block;
+      margin-top: 1rem;
+      font-weight: bold;
+    }
+
+    input[type=file] {
+      margin-top: .5rem;
+    }
+
+    button {
+      margin-top: 1.5rem;
+      padding: .6rem 1.2rem;
+      background: #0066cc;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #999;
+      cursor: not-allowed;
+    }
+
+    #log {
+      margin-top: 1rem;
+      padding: .5rem;
+      background: #eef;
+      white-space: pre-wrap;
+      max-height: 200px;
+      overflow: auto;
+      border-radius: 4px;
+    }
+
+    #result {
+      margin-top: 1rem;
+    }
+
+    a.download-link {
+      display: inline-block;
+      margin-top: .5rem;
+      padding: .4rem .8rem;
+      background: #28a745;
+      color: #fff;
+      border-radius: 4px;
+      text-decoration: none;
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div style="font-size:72px">📖</div>	
+    <h1>Kobo Device Migration Assistant</h1>
+    <h2>Migrate books and annotations from your old Kobo e-reader to your new Kobo e-reader</h2>
+    
+    <p>This little app runs entirely client-side in your browser: <b>your reading data never leaves your computer.</b></p>
+    
+    <label for="db2">Database from your old Kobo – has all the book data & annotations</label>
+    <input type="file" id="db2" accept=".sqlite,.db">
+    
+    <br><br>
+    
+    <label for="db1">Empty database from new device – has the Device ID for your new hardware</label>
+    <input type="file" id="db1" accept=".sqlite,.db">
+	<br>
+    <button id="runBtn" disabled>Run Migration</button>
+
+    <div id="log"></div>
+    <div id="result"></div> <!-- <-- link will be placed here -->
+    
+    <hr>
+    <p><small><em>If you’re skeptical about handing over your reading data to some website: make sure this page has finished loading, then fully disconnect from the internet before you upload your two databases. When the migration is complete, download the merged database, close the tab, and only then reconnect to the internet.</em></p></small></div><br> 	
+    <footer><small>Built by <a href="https://curiositry.com">Curiositry</a> with Sql.js and Lumo.</small></footer>
+
+  <!-- sql.js – SQLite compiled to WebAssembly -->
+  <!--script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"
+    integrity="sha512-Rw3r47C4BVCj/4dy0MiF30B9c7+dLNeJdgPkyw8KiiYqUzAP3XFFw90EjO7mHLkJBl7JCm+/iTuL9dGh47lbMw=="
+    crossorigin="anonymous" referrerpolicy="no-referrer"></script-->
+    <script src="sql-wasm.js"
+    integrity="sha512-Rw3r47C4BVCj/4dy0MiF30B9c7+dLNeJdgPkyw8KiiYqUzAP3XFFw90EjO7mHLkJBl7JCm+/iTuL9dGh47lbMw=="
+    crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+  <script>
+    (async () => {
+      const logEl = document.getElementById('log');
+      const resultEl = document.getElementById('result');
+      const btn = document.getElementById('runBtn');
+      const db1Input = document.getElementById('db1');
+      const db2Input = document.getElementById('db2');
+
+      // Load the sql.js WASM module once
+      // const SQL = await initSqlJs({locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${file}`});
+      const SQL = await initSqlJs({locateFile: file => `${file}`});
+
+      function log(msg) {logEl.textContent += msg + '\n';}
+
+      function enableButtonIfReady() {
+        btn.disabled = !(db1Input.files.length && db2Input.files.length);
+      }
+
+      db1Input.addEventListener('change', enableButtonIfReady);
+      db2Input.addEventListener('change', enableButtonIfReady);
+
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        log('--- Starting operation ---');
+
+        // ----- Read first DB -------------------------------------------------
+        const file1 = db1Input.files[0];
+        const buf1 = await file1.arrayBuffer();
+        const db1 = new SQL.Database(new Uint8Array(buf1));
+        log(`Loaded source (new device) DB: ${file1.name}`);
+
+        // Grab DeviceID(s) from the first DB.
+        // This example assumes the column exists and that you want every value.
+        // Adjust the query if you need a specific row (e.g., WHERE id = …).
+
+        let deviceIds = [];
+
+        try {
+          // NOTE: column name is case‑sensitive! Must match exactly the schema.
+          const stmt = db1.prepare('SELECT `___DeviceID` FROM user');
+
+          // If the table or column does not exist, `prepare` will throw.
+          while (stmt.step()) {
+            const row = stmt.getAsObject();   // { DeviceID: 'xyz' }
+            // Guard against unexpected undefined rows
+            if (row && typeof row.___DeviceID !== 'undefined') {
+              deviceIds.push(row.___DeviceID);
+            }
+          }
+          stmt.free();
+
+          if (deviceIds.length === 0) {
+            log('⚠️ Query succeeded but no rows were returned.');
+          } else {
+            log(`✔ Found ${deviceIds.length} DeviceID value(s): ${deviceIds.join(', ')}`);
+          }
+        } catch (e) {
+          log('❌ Error while reading DeviceID from source DB: ' + e);
+          srcDb.close();
+          btn.disabled = false;
+          return;
+        }
+
+        // ----- Read second DB ------------------------------------------------
+        const file2 = db2Input.files[0];
+        const buf2 = await file2.arrayBuffer();
+        const db2 = new SQL.Database(new Uint8Array(buf2));
+        log(`Loaded target (old device) DB: ${file2.name}`);
+
+        // Update the target DB.
+        // Here we simply overwrite the DeviceID column for every row with the
+        // first DeviceID we retrieved. If you need a row‑by‑row copy, adapt the
+        // loop accordingly.
+        if (deviceIds.length === 0) {
+          log('⚠️ No DeviceID found in source DB – nothing to copy.');
+        } else {
+          let newDeviceId = deviceIds[0]; // pick the first one
+          <!-- console.log(deviceIds[0]) -->
+          console.log(newDeviceId)
+          try {
+            db2.run('BEGIN TRANSACTION;');
+            db2.run('UPDATE user SET `___DeviceID` = ?', [newDeviceId]);
+            db2.run('COMMIT;');
+            log(`✅ Updated DeviceID in target DB to "${newDeviceId}".`);
+          } catch (e) {
+            db2.run('ROLLBACK;');
+            log('❌ Error updating target DB: ' + e);
+            return;
+          }
+        }
+
+        // ----- Export modified second DB ------------------------------------
+        const data = db2.export();               // Uint8Array
+        const blob = new Blob([data], {type: 'application/octet-stream'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file2.name
+        //.replace(/\.sqlite|\.db/i, '') + '-modified.db';
+        a.textContent = '💾 Download migrated database';
+        a.className = 'download-link';
+        resultEl.appendChild(a);
+
+        // Clean‑up
+        db1.close();
+        db2.close();
+        log('--- Operation finished ---');
+      });
+    })();
+  </script>
+</body>
+
+</html>
